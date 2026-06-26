@@ -17,7 +17,7 @@ library(scales)
 ### Baixando dados --------------------------------------------------------------
 
 # Pasta local
-pasta_local <- "C:/Users/olgab/Documents/LEGO III"
+pasta_local <- "C:/Users/olgab/Documents/LEGO III/Resultados"
 pasta_local <- "C:/Users/olgab/Documents/LEGO III/GF_1a11_tudo"
 
 # Comando para o R usar como referencia a pasta local
@@ -169,22 +169,61 @@ rm(grupo1_mod,
 # 8 variaveis
 colnames(grupo_todos)
 
+
+#### Vendo df Mathias
+
+dados1 <- import("dados_qc_trabalhados.csv")
+dados2 <- import("dados_qc_trabalhados_mod.csv")
+
+
 ### Juntando com grupos posicionais --------------------------------------------
 ## Adicionando posição no grupo todos
 
 # Baixando  
 posic <- import("sql_report.csv")
 
+linhas_cod <- import("sql_report_1.csv")
+
 ## O id é o mesmo, só precisa ser renomeado 
 ## Cada um dos códigos, de cada grupo focal (de 1 a 11) vão aparecer na ordem em
 ## que foram codificados (quem é rico 1 - quem é o rico 2 - causa da pobreza 3, etc)
 
-grupo_todos <- grupo_todos %>%
+grupo_todos_posic <- grupo_todos %>%
   mutate(ctid = str_remove(Id, "ctid:") %>% 
            as.integer()) %>% 
   inner_join(
     posic,
     by = "ctid") 
+
+grupo_todos_linha <- grupo_todos %>%
+  mutate(ctid = str_remove(Id, "ctid:") %>% 
+           as.integer()) %>% 
+  inner_join(
+    linhas_cod,
+    by = "ctid") 
+
+rm(grupo_todos2, grupo_todos1)
+
+##### GERMANO  -----------------------------------------------------------------
+
+grupo1_linha <- grupo_todos_linha %>% 
+  filter(File == "Grupo 1 - Pobres - Pretos e Pardos - 23-05-2024.docx") %>% 
+  select(linhas, everything()) 
+
+# grupo1_linha: 846 obs. 13 var
+
+grupo1_linha %>% 
+  glimpse()
+
+
+grupo_todos %>% 
+  filter(Category != "99 Referências",
+         Category != "99 Abrangência") %>% 
+  nrow()
+
+# 99 Referências
+# 99 Abrangência
+
 
 ## Excluindo variáveis não relevantes e colocando em ordem 
 grupo_todos <- grupo_todos %>% 
@@ -199,6 +238,169 @@ grupo_todos <- grupo_todos %>%
 
 ### Apagando posic (não vai mais ser usado porque já está dentro de grupo_todos)
 rm(posic)
+
+##### TESTANDO ARRUMAR LINHAS CLAUDE --------------------------------------------------
+
+library(tidyverse)
+
+grupo2_linha <- grupo1_linha %>%
+    mutate(linhas = str_trim(linhas)) %>%          # tira espaços tipo " 73-86"
+  separate_wider_delim(
+    linhas,
+    delim = "-",
+    names = c("inicio", "fim"),
+    too_few = "align_start"                       # quando não tem "-", "fim" fica NA
+  ) %>%
+  mutate(
+    inicio = as.integer(inicio),
+    fim    = coalesce(as.integer(fim), inicio)    # se fim é NA (número único), copia o inicio
+  )
+
+
+# Gráfico!!!
+
+categorias <- sort(unique(grupo2_linha$Category))
+paletas <- list(
+  c("#fff176","#f9a825","#f57f17","#e65100","#bf360c"),
+  c("#c8e6c9","#66bb6a","#2e7d32","#1b5e20"),
+  c("#bbdefb","#42a5f5","#1565c0","#0d47a1"),
+  c("#f8bbd0","#ec407a","#880e4f"),
+  c("#e1bee7","#ab47bc","#4a148c"),
+  c("#ffe0b2","#ff7043","#bf360c"),
+  c("#b2dfdb","#26a69a","#004d40"),
+  c("#f5f5f5","#bdbdbd","#424242"),
+  c("#dcedc8","#aed581","#558b2f"),
+  c("#fff9c4","#f9a825","#ff6f00"),
+  c("#fce4ec","#f48fb1","#c2185b")
+)
+names(paletas) <- categorias
+
+# -------------------------------------------------------
+# Associar cor a cada codename dentro da sua categoria
+# (ordena pela PRIMEIRA aparição: agora é min(inicio))
+# -------------------------------------------------------
+cor_por_codename <- grupo2_linha %>%
+  group_by(Category, Codename) %>%
+  summarise(primeira = min(inicio), .groups = "drop") %>%   # <-- mudou: pos0 -> inicio
+  arrange(Category, primeira) %>%
+  group_by(Category) %>%
+  mutate(
+    cor = colorRampPalette(paletas[[unique(Category)]])(n())[row_number()]
+  ) %>%
+  ungroup() %>%
+  select(Codename, cor)
+
+ordem_codenames <- cor_por_codename$Codename
+
+grupo2_grafico_linha <- grupo2_linha %>%
+  left_join(cor_por_codename, by = "Codename") %>%
+  mutate(Codename = factor(Codename, levels = rev(ordem_codenames)))
+
+cores_nomeadas <- setNames(cor_por_codename$cor, cor_por_codename$Codename)
+
+# -------------------------------------------------------
+# Gráfico  (geom_segment no lugar de geom_point)
+# -------------------------------------------------------
+ggplot(grupo2_grafico_linha,
+       aes(x = inicio, xend = fim, y = Codename, yend = Codename,
+           color = Codename)) +
+  geom_segment(linewidth = 3, lineend = "square") +        # <-- mudou: point -> segment
+  scale_color_manual(values = cores_nomeadas) +
+  scale_x_continuous(
+    limits = c(0, 1377),                                   # <-- mudou: 0 a 1377
+    breaks = seq(0, 1377, by = 100),
+    minor_breaks = seq(0, 1377, by = 5)
+  ) +
+  labs(
+    title = "Ocorrências por Código — File 2",
+    subtitle = "Códigos agrupados por categoria | Tons de cor = família da categoria",
+    x = "Ordem de Ocorrência (início → fim da conversa)",
+    y = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    legend.position = "none",
+    panel.grid.major.x = element_line(color = "grey80"),
+    panel.grid.minor.x = element_line(color = "grey90", linewidth = 0.3),
+    panel.grid.major.y = element_line(color = "grey95"),
+    axis.text.y = element_text(size = 8),
+    axis.text.x = element_text(size = 9),
+    plot.subtitle = element_text(size = 9, color = "grey40")
+  )
+
+ggplot(grupo2_grafico_linha,
+       aes(x = inicio, xend = fim, y = Codename, yend = Codename,
+           color = Codename)) +
+  geom_segment(linewidth = 2, lineend = "square") +
+  scale_color_manual(values = cores_nomeadas) +
+  scale_x_continuous(
+    limits = c(0, 1377),
+    breaks = seq(0, 1377, by = 100),
+    minor_breaks = seq(0, 1377, by = 5)
+  ) +
+  labs(
+    title = "Ocorrências por Código — File 2",
+    subtitle = "Códigos agrupados por categoria | Tons de cor = família da categoria",
+    x = "Ordem de Ocorrência (início → fim da conversa)",
+    y = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    legend.position = "none",
+    panel.grid.major.x = element_line(color = "grey80"),
+    panel.grid.minor.x = element_line(color = "grey90", linewidth = 0.3),
+    panel.grid.major.y = element_line(color = "grey95"),
+    axis.text.y = element_text(size = 6),
+    axis.text.x = element_text(size = 9),
+    plot.subtitle = element_text(size = 9, color = "grey40")
+  )
+
+## Arrumando
+
+ggplot(grupo2_grafico_linha,
+       aes(x = inicio, xend = fim, y = Codename, yend = Codename,
+           color = Codename)) +
+  geom_segment(linewidth = 2, lineend = "square") +
+  geom_point(                                              # <-- NOVO: garante os números únicos
+    data = dplyr::filter(grupo2_grafico_linha, inicio == fim),
+    aes(x = inicio),
+    shape = 15, size = 2
+  ) +
+  scale_color_manual(values = cores_nomeadas) +
+  scale_x_continuous(
+    limits = c(0, 1377),
+    breaks = seq(0, 1377, by = 100),
+    minor_breaks = seq(0, 1377, by = 5)
+  ) +
+  labs(
+    title = "Ocorrências por Código — File 1",
+    subtitle = "Códigos agrupados por categoria | Tons de cor = família da categoria",
+    x = "Ordem de Ocorrência (início → fim da conversa)",
+    y = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    legend.position = "none",
+    panel.grid.major.x = element_line(color = "grey80"),
+    panel.grid.minor.x = element_line(color = "grey90", linewidth = 0.3),
+    panel.grid.major.y = element_line(color = "grey95"),
+    axis.text.y = element_text(size = 6),
+    axis.text.x = element_text(size = 9),
+    plot.subtitle = element_text(size = 9, color = "grey40")
+  )
+
+# salvando
+ggsave("ocorrencias_file1.png",
+       width = 16, height = 12, dpi = 150, bg = "white")
+
+# Vendo novo objeto
+
+tabyl(grupo2_linha, linhas)
+tail(grupo2_linha,5)
+
+grupo2_linha %>% 
+  select(inicio, fim, Category, Codename) %>% 
+  head(5)
 
 ### TESTANDO A ORDEM -----------------------------------------------------------
 grupo_todos %>% 
@@ -366,7 +568,6 @@ ggplot(df_heat, aes(x = bloco, y = Codename, fill = n)) +
 ggsave("heatmap_file2.png", width = 14, height = 12, dpi = 300)
 
 ### OPÇÃO 4 --------------------------------------------------------------------
-
 library(ggplot2)
 library(dplyr)
 
@@ -376,21 +577,10 @@ grupo_grafico_2 <- grupo_todos %>%
   arrange(pos0) %>%
   mutate(ordem_ocorrencia = row_number())
 
-# Ordem dos codenames agrupados por categoria e por primeira aparição dentro dela
-ordem_codenames <- grupo_grafico_2 %>%
-  group_by(Category, Codename) %>%
-  summarise(primeira = min(pos0), .groups = "drop") %>%
-  arrange(Category, primeira) %>%
-  pull(Codename)
-
-grupo_grafico_2 <- grupo_grafico_2 %>%
-  mutate(Codename = factor(Codename, levels = rev(ordem_codenames)))
-
 # -------------------------------------------------------
 # Paleta: cada categoria tem uma família de tons
-# Ajuste os nomes das categorias conforme seu banco!
 # -------------------------------------------------------
-categorias <- unique(grupo_grafico_2$Category) %>% sort()
+categorias <- sort(unique(grupo_grafico_2$Category))
 
 paletas <- list(
   c("#fff176","#f9a825","#f57f17","#e65100","#bf360c"),  # tons de amarelo/laranja
@@ -402,21 +592,62 @@ paletas <- list(
   c("#b2dfdb","#26a69a","#004d40"),                      # tons de teal
   c("#f5f5f5","#bdbdbd","#424242"),                      # tons de cinza
   c("#dcedc8","#aed581","#558b2f"),                      # tons de verde-limão
-  c("#fff9c4","#fff176","#f9a825","#ff6f00"),            # tons de amarelo forte
+  c("#fff9c4","#f9a825","#ff6f00"),                      # tons de amarelo forte
   c("#fce4ec","#f48fb1","#c2185b")                       # tons de pink
 )
+names(paletas) <- categorias
 
-# Associar cada codename à sua cor dentro da família da categoria
+# -------------------------------------------------------
+# Associar cor a cada codename dentro da sua categoria
+# -------------------------------------------------------
 cor_por_codename <- grupo_grafico_2 %>%
   group_by(Category, Codename) %>%
   summarise(primeira = min(pos0), .groups = "drop") %>%
   arrange(Category, primeira) %>%
   group_by(Category) %>%
   mutate(
-    idx_cat = match(first(Category), categorias),
-    paleta_cat = list(paletas[[idx_cat]]),
-    n_codigos = n(),
-    idx_codigo = row_number(),
+    cor = colorRampPalette(paletas[[unique(Category)]])(n())[row_number()]
+  ) %>%
+  ungroup() %>%
+  select(Codename, cor)
+
+# Ordem dos codenames no eixo Y
+ordem_codenames <- cor_por_codename$Codename
+
+grupo_grafico_2 <- grupo_grafico_2 %>%
+  left_join(cor_por_codename, by = "Codename") %>%
+  mutate(Codename = factor(Codename, levels = rev(ordem_codenames)))
+
+cores_nomeadas <- setNames(cor_por_codename$cor, cor_por_codename$Codename)
+
+# -------------------------------------------------------
+# Gráfico
+# -------------------------------------------------------
+ggplot(grupo_grafico_2, aes(x = ordem_ocorrencia, y = Codename, color = Codename)) +
+  geom_point(size = 3, shape = 15) +
+  scale_color_manual(values = cores_nomeadas) +
+  scale_x_continuous(
+    breaks = seq(0, 500, by = 100),
+    minor_breaks = seq(0, 500, by = 5)
+  ) +
+  labs(
+    title = "Ocorrências por Código — File 2",
+    subtitle = "Códigos agrupados por categoria | Tons de cor = família da categoria",
+    x = "Ordem de Ocorrência (início → fim da conversa)",
+    y = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    legend.position = "none",
+    panel.grid.major.x = element_line(color = "grey80"),
+    panel.grid.minor.x = element_line(color = "grey90", linewidth = 0.3),
+    panel.grid.major.y = element_line(color = "grey95"),
+    axis.text.y = element_text(size = 8),
+    axis.text.x = element_text(size = 9),
+    plot.subtitle = element_text(size = 9, color = "grey40")
+  )
+
+ggsave("dotplot_file2.png", width = 16, height = 14, dpi = 300, bg = "white")
 
 ### PARA ICR: Criação do objeto grupos_todos_separados--------------------------
 
